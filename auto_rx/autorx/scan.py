@@ -229,18 +229,28 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
         else:
             _rx_bw = 200000
 
-    # Sample Source (rtl_fm)
-    rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M fm -F9 -s %d -f %d 2>/dev/null |" % (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _rx_bw, frequency) 
-    # Sample filtering
-    rx_test_command += "sox -t raw -r %d -e s -b 16 -c 1 - -r 48000 -t wav - highpass 20 2>/dev/null | " % _rx_bw
+    if "ss_iq" in sdr_fm:
+       _rx_bw = 78125
+       _out_fs = 48000
+       # If it is a centered IF band (i.e. decimated otherwise it will take a while), then it is 
+       # ./dft-detect --iq <iq_data.wav>
+       rx_test_command = "timeout %ds %s %s -s %d -f %d | ./tsrc - - %f | ./dft-detect --iq -t %d" % \
+          (dwell_time*2, sdr_fm,  gain_param, _rx_bw, frequency, (float(_out_fs) / float(_rx_bw)), dwell_time ) 
+    
+    else:
+       # Sample Source (rtl_fm)
+       rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M fm -F9 -s %d -f %d 2>/dev/null |" % \
+         (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _rx_bw, frequency) 
+       # Sample filtering
+       rx_test_command += "sox -t raw -r %d -e s -b 16 -c 1 - -r 48000 -t wav - highpass 20 2>/dev/null | " % _rx_bw
 
-    # Saving of Debug audio, if enabled,
-    if save_detection_audio:
-        rx_test_command += "tee detect_%s.wav | " % str(device_idx)
+       # Saving of Debug audio, if enabled,
+       if save_detection_audio:
+           rx_test_command += "tee detect_%s.wav | " % str(device_idx)
 
-    # Sample decoding / detection
-    # Note that we detect for dwell_time seconds, and timeout after dwell_time*2, to catch if no samples are being passed through.
-    rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d 2>/dev/null" % dwell_time
+       # Sample decoding / detection
+       # Note that we detect for dwell_time seconds, and timeout after dwell_time*2, to catch if no samples are being passed through.
+       rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d 2>/dev/null" % dwell_time
 
     logging.debug("Scanner #%s - Using detection command: %s" % (str(device_idx), rx_test_command))
     logging.debug("Scanner #%s - Attempting sonde detection on %.3f MHz" % (str(device_idx), frequency/1e6))
@@ -525,7 +535,7 @@ class SondeScanner(object):
 
             except (IOError, ValueError) as e:
                 # No log file produced. Reset the RTLSDR and try again.
-                #traceback.print_exc()
+                traceback.print_exc()
                 self.log_warning("RTLSDR produced no output... resetting and retrying.")
                 self.error_retries += 1
                 # Attempt to reset the RTLSDR.
@@ -646,6 +656,12 @@ class SondeScanner(object):
             for _frequency in np.array(self.blacklist)*1e6:
                 _index = np.argwhere(peak_frequencies==_frequency)
                 peak_frequencies = np.delete(peak_frequencies, _index)
+
+            # Remove any frequencies outside the freq limits.
+            for _frequency in peak_frequencies:
+               if _frequency < self.min_freq*1e6 or _frequency > self.max_freq*1e6:
+                   _index = np.argwhere(peak_frequencies==_frequency)
+                   peak_frequencies = np.delete(peak_frequencies, _index)
 
             # Limit to the user-defined number of peaks to search over.
             if len(peak_frequencies) > self.max_peaks:
