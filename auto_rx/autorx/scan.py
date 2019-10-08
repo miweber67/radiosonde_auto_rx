@@ -244,21 +244,24 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
 
     if _mode == 'IQ':
         if "ss_iq" in sdr_fm:
-           _rx_bw = 78125
-           _out_fs = 48000
+           _iq_bw = 78125
+
+           #           _out_fs = 48000
            # If it is a centered IF band (i.e. decimated otherwise it will take a while), then it is 
            # ./dft-detect --iq <iq_data.wav>
-           rx_test_command = "timeout %ds %s %s -s %d -f %d | ./tsrc - - %f | ./dft-detect --iq -t %d" % \
-             (dwell_time*2, sdr_fm,  gain_param, _rx_bw, frequency, (float(_out_fs) / float(_rx_bw)), dwell_time ) 
-        else:
-            # IQ decoding
-            # Sample source (rtl_fm, in IQ mode)
-            rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M raw -F9 -s %d -f %d 2>/dev/null |" % (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _iq_bw, frequency)
-            # Saving of Debug audio, if enabled,
-            if save_detection_audio:
-                rx_test_command += "tee detect_%s.raw | " % str(device_idx)
+           # rx_test_command = "timeout %ds %s %s -s %d -f %d | ./dft-detect -t %d --iq --bw %d --dc - %d 16" % \
+           #  (dwell_time*2, sdr_fm,  gain_param, _iq_bw, frequency, dwell_time ) 
 
-            rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d --iq --bw %d --dc - %d 16 2>/dev/null" % (dwell_time, _if_bw, _iq_bw)
+        # IQ decoding
+        # Sample source (rtl_fm, in IQ mode)
+        rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M raw -F9 -s %d -f %d 2>/dev/null |" % (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _iq_bw, frequency)
+
+        # Saving of Debug audio, if enabled,
+        if save_detection_audio:
+            rx_test_command += "tee detect_%s.raw | " % str(device_idx)
+
+        # rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d --iq --bw %d --dc - %d 16 2>/dev/null" % (dwell_time, _if_bw, _iq_bw)
+        rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d --iq --bw %d - %d 16 2>/dev/null" % (dwell_time, _if_bw, _iq_bw)
    
     elif _mode == 'FM':
         # FM decoding

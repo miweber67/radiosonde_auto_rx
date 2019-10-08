@@ -623,18 +623,18 @@ class SondeDecoder(object):
             demod_stats = FSKDemodStats(averaging_time=2.0, peak_hold=False)
             self.rx_frequency = _freq
 
-       elif "ss_iq" in self.sdr_fm and self.sonde_type == "LMS6":
+        elif "ss_iq" in self.sdr_fm and self.sonde_type == "LMS6":
             # LMS6 (400 MHz variant) Decoder command.
-            _sdr_rate = 78125 # IQ rate. Lower rate = lower CPU usage, but less frequency tracking ability.
-            _output_rate = 48000
-            _baud_rate = 4800
-            _offset = 0.25 # Place the sonde frequency in the centre of the passband.
-            _lower = int(0.025 * _sdr_rate) # Limit the frequency estimation window to not include the passband edges.
-            _upper = int(0.475 * _sdr_rate)
-            _freq = int(self.sonde_freq - _sdr_rate*_offset)
+            _sdr_rate = 39062 # IQ rate. Lower rate = lower CPU usage, but less frequency tracking ability.
+#            _baud_rate = 4800
+#            _offset = 0.25 # Place the sonde frequency in the centre of the passband.
+#            _lower = int(0.025 * _sdr_rate) # Limit the frequency estimation window to not include the passband edges.
+#            _upper = int(0.475 * _sdr_rate)
+#            _freq = int(self.sonde_freq - _sdr_rate*_offset)
+            _freq = int(self.sonde_freq)
 
-            demod_cmd = "%s %s -s %d -f %d  |" % \
-               (self.sdr_fm, gain_param, _sdr_rate, _freq)
+            demod_cmd = "%s %s -s %d -f %d  2>/dev/null | sox -t raw -r %d -e signed-integer -b 16 -c 2 - -r %d -b 16 -t wav - |" % \
+               (self.sdr_fm, gain_param, _sdr_rate, _freq, _sdr_rate, _sdr_rate)
             # Add in tee command to save IQ to disk if debugging is enabled.
             if self.save_decode_iq:
                 demod_cmd += " tee decode_IQ_%s.bin |" % str(self.device_idx)
@@ -645,6 +645,11 @@ class SondeDecoder(object):
             #   is expected, add --dc.
 
             decode_cmd = " ./lms6Xmod --vit --ecc --IQ 0.0 --lp --dc --json 2>/dev/null"
+
+            # LMS sondes transmit continuously - average over the last 2 frames, and use a mean
+            demod_stats = FSKDemodStats(averaging_time=2.0, peak_hold=False)
+            self.rx_frequency = _freq
+
         else:
             return None
 
