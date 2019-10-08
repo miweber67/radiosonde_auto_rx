@@ -230,12 +230,18 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
             _rx_bw = 200000
 
     if "ss_iq" in sdr_fm:
+       # spyserver detect command; no detect audio available
        _rx_bw = 78125
        _out_fs = 48000
-       # If it is a centered IF band (i.e. decimated otherwise it will take a while), then it is 
-       # ./dft-detect --iq <iq_data.wav>
-       rx_test_command = "timeout %ds %s %s -s %d -f %d | ./tsrc - - %f | ./dft-detect --iq -t %d" % \
-          (dwell_time*2, sdr_fm,  gain_param, _rx_bw, frequency, (float(_out_fs) / float(_rx_bw)), dwell_time ) 
+       # rs1729 says: ss_iq -g 18 -s 78125 -f 401386000 | ./dft_detect --IQ 0.0 - 78125 16
+       # For LMS6, better use lms6Xmod, the important option is
+       #   --vit, also --ecc. For IQ-data (--IQ <fq> or --iq2) you would also
+       #   use --lp (dft_detect does filtering by default). If frequency offset
+       #   is expected, add --dc.
+#       rx_test_command = "timeout %ds %s %s -s %d -f %d | ./tsrc - - %f | ./dft-detect --iq -t %d" % \
+#          (dwell_time*2, sdr_fm,  gain_param, _rx_bw, frequency, (float(_out_fs) / float(_rx_bw)), dwell_time ) 
+       rx_test_command = "timeout %ds %s %s -s %d -f %d | ./dft-detect -t %d --IQ 0.0 - 78125 16 " % \
+          (dwell_time*2, sdr_fm,  gain_param, _rx_bw, frequency, dwell_time ) 
     
     else:
        # Sample Source (rtl_fm)

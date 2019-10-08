@@ -594,7 +594,7 @@ class SondeDecoder(object):
             # iMet-4 (IMET1RS) decoder
             decode_cmd += "./imet1rs_dft --json 2>/dev/null"
 
-        elif self.sonde_type == "LMS6":
+        elif (not "ss_iq" in self.sdr_fm) and self.sonde_type == "LMS6":
             # LMS6 (400 MHz variant) Decoder command.
             _sdr_rate = 48000 # IQ rate. Lower rate = lower CPU usage, but less frequency tracking ability.
             _output_rate = 48000
@@ -617,6 +617,29 @@ class SondeDecoder(object):
                 decode_cmd += " tee decode_%s.wav |" % str(self.device_idx)
 
             decode_cmd += "./lms6Xmod --json 2>/dev/null"
+
+        elif "ss_iq" in self.sdr_fm and self.sonde_type == "LMS6":
+            # LMS6 (400 MHz variant) Decoder command.
+            _sdr_rate = 78125 # IQ rate. Lower rate = lower CPU usage, but less frequency tracking ability.
+            _output_rate = 48000
+            _baud_rate = 4800
+            _offset = 0.25 # Place the sonde frequency in the centre of the passband.
+            _lower = int(0.025 * _sdr_rate) # Limit the frequency estimation window to not include the passband edges.
+            _upper = int(0.475 * _sdr_rate)
+            _freq = int(self.sonde_freq - _sdr_rate*_offset)
+
+            decode_cmd = "%s %s -s %d -f %d  |" % \
+               (self.sdr_fm, gain_param, _sdr_rate, _freq)
+            # Add in tee command to save IQ to disk if debugging is enabled.
+            if self.save_decode_iq:
+                decode_cmd += " tee decode_IQ_%s.bin |" % str(self.device_idx)
+
+            # For LMS6, better use lms6Xmod, the important option is
+            #   --vit, also --ecc. For IQ-data (--IQ <fq> or --iq2) you would also
+            #   use --lp (dft_detect does filtering by default). If frequency offset
+            #   is expected, add --dc.
+
+            decode_cmd += " ./lms6Xmod --vit --ecc --IQ 0.0 --lp --dc --json 2>/dev/null"
 
         else:
             return None
