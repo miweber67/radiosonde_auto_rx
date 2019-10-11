@@ -637,14 +637,14 @@ class SondeDecoder(object):
                (self.sdr_fm, gain_param, _sdr_rate, _freq, _sdr_rate, _sdr_rate)
             # Add in tee command to save IQ to disk if debugging is enabled.
             if self.save_decode_iq:
-                demod_cmd += " tee decode_IQ_%s.bin |" % str(self.device_idx)
+                demod_cmd += " tee decode_IQ_%s.bin" % str(self.device_idx)
 
             # For LMS6, better use lms6Xmod, the important option is
             #   --vit, also --ecc. For IQ-data (--IQ <fq> or --iq2) you would also
             #   use --lp (dft_detect does filtering by default). If frequency offset
             #   is expected, add --dc.
 
-            decode_cmd = " ./lms6Xmod --vit --ecc --IQ 0.0 --lp --dc --json 2>/dev/null"
+            decode_cmd = " ./lms6Xmod --vit --ecc --IQ 0.0 --lp --dc --json - %d 16 2>/dev/null" % (_sdr_rate)
 
             # LMS sondes transmit continuously - average over the last 2 frames, and use a mean
             demod_stats = FSKDemodStats(averaging_time=2.0, peak_hold=False)

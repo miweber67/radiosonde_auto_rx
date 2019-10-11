@@ -260,8 +260,7 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
         if save_detection_audio:
             rx_test_command += "tee detect_%s.raw | " % str(device_idx)
 
-        # rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d --iq --bw %d --dc - %d 16 2>/dev/null" % (dwell_time, _if_bw, _iq_bw)
-        rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d --iq --bw %d - %d 16 2>/dev/null" % (dwell_time, _if_bw, _iq_bw)
+        rx_test_command += os.path.join(rs_path,"dft_detect") + " -t %d --iq --bw %d --dc - %d 16 2>/dev/null" % (dwell_time, _if_bw, _iq_bw)
    
     elif _mode == 'FM':
         # FM decoding
