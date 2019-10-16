@@ -245,7 +245,8 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
     if _mode == 'IQ':
         # IQ decoding
         # Sample source (rtl_fm, in IQ mode)
-        rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M raw -F9 -s %d -f %d 2>/dev/null |" % (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _iq_bw, frequency)
+        # rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M raw -F9 -s %d -f %d 2>/dev/null |" % (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _iq_bw, frequency)
+        rx_test_command = "timeout %ds %s %s-p %d -d %s %s-M raw -F9 -s %d -f %d |" % (dwell_time*2, sdr_fm, bias_option, int(ppm), str(device_idx), gain_param, _iq_bw, frequency)
         # Saving of Debug audio, if enabled,
         if save_detection_audio:
             rx_test_command += "tee detect_%s.raw | " % str(device_idx)
@@ -280,7 +281,7 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
         ret_output = ret_output.decode('utf8')
     except subprocess.CalledProcessError as e:
         # dft_detect returns a code of 1 if no sonde is detected.
-        # logging.debug("Scanner - dfm_detect return code: %s" % e.returncode)
+        logging.debug("Scanner - dfm_detect exception return code: %s" % e.returncode)
         if e.returncode == 124:
             logging.error("Scanner #%s - dft_detect timed out." % str(device_idx))
             raise IOError("Possible RTLSDR lockup.")
@@ -296,17 +297,13 @@ def detect_sonde(frequency, rs_path="./", dwell_time=10, sdr_fm='rtl_fm', device
         logging.error("Scanner #%s - Error when running dft_detect - %s" % (str(device_idx), str(e)))
         return (None, 0.0)
 
-
     _runtime = time.time() - _start
-    logging.debug("Scanner - dft_detect exited in %.1f seconds with return code 1." % _runtime)
+    logging.debug("Scanner #%s - dft_detect ran %.1f seconds checking %.3f returned '%s'" % (str(device_idx), _runtime, frequency/1e6, ret_output.strip()) )
 
     # Check for no output from dft_detect.
     if ret_output is None or ret_output == "":
-        #logging.error("Scanner - dft_detect returned no output?")
+        logging.debug("Scanner #%s - no sonde found at %.3f" % (str(device_idx), frequency/1e6) )
         return (None, 0.0)
-
-
-
 
     # Split the line into sonde type and correlation score.
     _fields = ret_output.split(':')
@@ -677,6 +674,12 @@ class SondeScanner(object):
             peak_freqs = freq[peak_indices]
             peak_frequencies = peak_freqs[np.argsort(peak_powers)][::-1]
 
+            # Remove any frequencies outside the freq limits.
+            for _frequency in peak_frequencies:
+               if _frequency < self.min_freq*1e6 or _frequency > self.max_freq*1e6:
+                   _index = np.argwhere(peak_frequencies==_frequency)
+                   peak_frequencies = np.delete(peak_frequencies, _index)
+
             # Quantize to nearest x Hz
             peak_frequencies = np.round(peak_frequencies/self.quantization)*self.quantization
 
@@ -783,8 +786,12 @@ class SondeScanner(object):
                 # If we only want the first detected sonde, then return now.
                 if first_only:
                     return _search_results
+            else:
+                # No sonde here, don't look for a while to allow other peaks
+                # to be considered next scan
+                if _freq/1e6 not in self.greylist and _freq/1e6 not in self.whitelist:
+                    self.add_temporary_block(_freq)
 
-                # Otherwise, we continue....
 
         if len(_search_results) == 0:
             self.log_debug("No sondes detected.")

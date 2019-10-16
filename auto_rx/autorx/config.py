@@ -312,6 +312,8 @@ def read_auto_rx_config(filename, no_sdr_test=False):
 		# Now we attempt to read in the individual SDR parameters.
 		auto_rx_config['sdr_settings'] = {}
 
+		logging.info('Config - looking for {} SDRs...'.format(auto_rx_config['sdr_quantity']))
+      
 		for _n in range(1,auto_rx_config['sdr_quantity']+1):
 			_section = "sdr_%d" % _n
 			try:
