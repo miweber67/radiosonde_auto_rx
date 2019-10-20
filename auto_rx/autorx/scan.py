@@ -568,7 +568,7 @@ class SondeScanner(object):
 
             except (IOError, ValueError) as e:
                 # No log file produced. Reset the RTLSDR and try again.
-                #traceback.print_exc()
+                traceback.print_exc()
                 self.log_warning("RTLSDR produced no output... resetting and retrying.")
                 self.error_retries += 1
                 # Attempt to reset the RTLSDR.
@@ -689,6 +689,12 @@ class SondeScanner(object):
             for _frequency in np.array(self.blacklist)*1e6:
                 _index = np.argwhere(peak_frequencies==_frequency)
                 peak_frequencies = np.delete(peak_frequencies, _index)
+
+            # Remove any frequencies outside the freq limits.
+            for _frequency in peak_frequencies:
+               if _frequency < self.min_freq*1e6 or _frequency > self.max_freq*1e6:
+                   _index = np.argwhere(peak_frequencies==_frequency)
+                   peak_frequencies = np.delete(peak_frequencies, _index)
 
             # Limit to the user-defined number of peaks to search over.
             if len(peak_frequencies) > self.max_peaks:
