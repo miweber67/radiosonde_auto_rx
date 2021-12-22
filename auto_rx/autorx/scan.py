@@ -645,6 +645,8 @@ class SondeScanner(object):
                 # an issue with the RTLSDR. Sometimes these issues can be resolved by issuing a usb reset to the RTLSDR.
                 raise ValueError("Invalid Log File")
 
+            # debug
+            # print("freq[0]: {}  freq[-1]: {}  len_freq(): {}".format(freq[0], freq[-1], len(freq)))
 
             # Update the global scan result
             (_freq_decimate, _power_decimate) = peak_decimation(freq/1e6, power, 10) 
@@ -662,6 +664,8 @@ class SondeScanner(object):
             # Detect peaks.
             peak_indices = detect_peaks(power, mph=(power_nf+self.snr_threshold), mpd=(self.min_distance/step), show = False)
 
+            #print("peak_indices: {}".format(peak_indices))
+
             # If we have found no peaks, and no greylist has been provided, re-scan.
             if (len(peak_indices) == 0) and (len(self.greylist) == 0):
                 self.log_debug("No peaks found.")
@@ -671,7 +675,9 @@ class SondeScanner(object):
 
             # Sort peaks by power.
             peak_powers = power[peak_indices]
+            #print("peak_powers: {}".format(peak_powers))
             peak_freqs = freq[peak_indices]
+            #print("peak_freqs: {}".format(peak_freqs))
             peak_frequencies = peak_freqs[np.argsort(peak_powers)][::-1]
 
             # Remove any frequencies outside the freq limits.
@@ -706,7 +712,7 @@ class SondeScanner(object):
             # Append on any frequencies in the supplied greylist
             peak_frequencies = np.append(np.array(self.greylist)*1e6, peak_frequencies)
 
-            
+
             # Remove any frequencies in the temporary block list
             self.temporary_block_list_lock.acquire()
             for _frequency in self.temporary_block_list.copy().keys():
