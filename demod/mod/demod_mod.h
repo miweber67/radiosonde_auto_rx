@@ -3,12 +3,24 @@
 #include <math.h>
 #include <complex.h>
 
+#ifndef M_PI
+    #define M_PI  (3.1415926535897932384626433832795)
+#endif
+
+#define LP_IQ    1
+#define LP_FM    2
+#define LP_IQFM  4
+
+
+#ifndef INTTYPES
+#define INTTYPES
 typedef unsigned char  ui8_t;
 typedef unsigned short ui16_t;
 typedef unsigned int   ui32_t;
 typedef char  i8_t;
 typedef short i16_t;
 typedef int   i32_t;
+#endif
 
 
 typedef struct {
@@ -50,10 +62,11 @@ typedef struct {
     int K;
     float *match;
     float *bufs;
-    float dc_ofs;
-    float dc;
     float mv;
     ui32_t mv_pos;
+    //
+    float mv2;
+    ui32_t mv2_pos;
     //
     int N_norm;
     int Nvar;
@@ -64,8 +77,8 @@ typedef struct {
 
     // IQ-data
     int opt_iq;
+    int opt_iqdc;
     int N_IQBUF;
-    float complex *raw_iqbuf;
     float complex *rot_iqbuf;
     float complex F1sum;
     float complex F2sum;
@@ -82,8 +95,13 @@ typedef struct {
     // DFT
     dft_t DFT;
 
-    double df;
-    int len_sq;
+    // dc offset
+    int opt_dc;
+    int locked;
+    double dc;
+    double Df;
+    double dDf;
+    //
 
     ui32_t sample_posframe;
     ui32_t sample_posnoise;
@@ -91,6 +109,36 @@ typedef struct {
     double V_noise;
     double V_signal;
     double SNRdB;
+
+    // decimate
+    int opt_nolut; // default: LUT
+    int opt_IFmin;
+    int decM;
+    ui32_t sr_base;
+    ui32_t dectaps;
+    ui32_t sample_dec;
+    ui32_t lut_len;
+    float complex *decXbuffer;
+    float complex *decMbuf;
+    float complex *ex; // exp_lut
+    double xlt_fq;
+
+    // IF: lowpass
+    int opt_lp;
+    int lpIQ_bw;
+    float lpIQ_fbw;
+    int lpIQtaps; // ui32_t
+    float *ws_lpIQ0;
+    float *ws_lpIQ1;
+    float *ws_lpIQ;
+    float complex *lpIQ_buf;
+
+    // FM: lowpass
+    int lpFM_bw;
+    int lpFMtaps; // ui32_t
+    float *ws_lpFM;
+    float *lpFM_buf;
+    float *fm_buffer;
 
 } dsp_t;
 
@@ -103,19 +151,36 @@ typedef struct {
 } pcm_t;
 
 
+typedef struct {
+    ui8_t hb;
+    float sb;
+} hsbit_t;
+
+
+typedef struct {
+    char *hdr;
+    char *buf;
+    float *sbuf;
+    int len;
+    int bufpos;
+    float thb;
+    float ths;
+} hdb_t;
+
 
 float read_wav_header(pcm_t *, FILE *);
 int f32buf_sample(dsp_t *, int);
 int read_slbit(dsp_t *, int*, int, int, int, float, int);
-
-int get_fqofs_rs41(dsp_t *, ui32_t, float *, float *);
-float get_bufvar(dsp_t *, int);
-float get_bufmu(dsp_t *, int);
+int read_softbit(dsp_t *, hsbit_t *, int, int, int, float, int);
+int read_softbit2p(dsp_t *dsp, hsbit_t *shb, int inv, int ofs, int pos, float l, int spike, hsbit_t *shb1);
 
 int init_buffers(dsp_t *);
 int free_buffers(dsp_t *);
 
-ui32_t get_sample(dsp_t *);
-
 int find_header(dsp_t *, float, int, int, int);
+
+int f32soft_read(FILE *fp, float *s);
+int find_binhead(FILE *fp, hdb_t *hdb, float *score);
+int find_softbinhead(FILE *fp, hdb_t *hdb, float *score);
+
 

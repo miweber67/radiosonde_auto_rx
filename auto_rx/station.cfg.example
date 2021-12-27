@@ -3,6 +3,11 @@
 #
 # Copy this file to station.cfg and modify as required. 
 #
+# If you only change a few settings, the important ones to change are:
+# - [habitat] -> uploader_callsign - Your station callsign!
+# - [location] -> station_lat, station_lon, station_alt - Your station location!
+# - [search_params] -> min_freq, max_freq - Set these suitable for your location!
+#
 
 ###################
 # RTLSDR SETTINGS #
@@ -20,10 +25,13 @@ sdr_quantity = 1
 #	If using multiple SDRs, you MUST allocate each SDR a unique serial number using rtl_eeprom
 #	i.e. to set the serial number of a (single) connected RTLSDR: rtl_eeprom -s 00000002
 #	Then set the device_idx below to 00000002, and repeat for the other [sdr_n] sections below
+#
+#   For the special case when auto_rx is used entirely with a JSON-via-UDP input, set the below to TCP001
+#   This will bypass all RTLSDR checks and allow auto_rx to continue running.
 device_idx = 0
 
 # Frequency Correction (ppm offset)
-# 	Refer here for a method of determining this correction: https://gist.github.com/darksidelemm/b517e6a9b821c50c170f1b9b7d65b824
+# 	Refer here for a method of determining this correction using LTE signals: https://gist.github.com/darksidelemm/b517e6a9b821c50c170f1b9b7d65b824
 ppm = 0
 
 # SDR Gain Setting
@@ -42,7 +50,7 @@ ppm = 0
 gain = -1
 bias = False
 
-# Add more SDR definitions here if needed.
+# Add more SDR definitions here if needed. ([sdr_3], [sdr_4])
 
 
 ##############################
@@ -51,100 +59,100 @@ bias = False
 [search_params]
 # Minimum and maximum search frequencies, in MHz.
 # Australia: Use 400.05 - 403 MHz
+# New Zealand: Use 400.05 - 404 MHz
 # Europe: Use 400.05 - 406 MHz
 # US: 
-#   Some areas have transitioned to the 400.05 - 406 MHz band.
-#   Some areas are using ~1680 MHZ sondes, which use channels of 1676, 1678, 1680 and 1682 MHz (Thanks Tory!)
-#   In these areas I suggest using the whitelist feature below instead of using the peak-detect search.
+#   Some areas have transitioned to the 400.05 - 406 MHz band, so try 400.05 - 406
+#   Some areas are still using ~1680 MHz sondes, which use channels of 1676, 1678, 1680 and 1682 MHz (Thanks Tory!)
+#   Example only_scan for these sondes: [1676.0, 1678.0, 1680.0, 1682.0]
+#   In these areas I suggest using the only_scan feature below instead of using the peak-detect search.
 #	You may also need to apply a small offset to the frequency for decoding reliability (i.e. 1676.025 MHz) as 
 #	the sondes are often off-frequency. For now, check in something like GQRX to get an idea of what offset is required.
 
 min_freq = 400.05
 max_freq = 403.0
 
-# Have the decoder timeout after X seconds of no valid data.
+# After rx_timeout seconds of no valid data from a decoder, stop the decoder and go back to scanning (if a SDR is available)
 rx_timeout = 180
 
 # Frequency Lists - These must be provided as JSON-compatible lists of floats (in MHz), i.e. [400.50, 401.520, 403.200]
 
-# White-List - Add values to this list to *only* scan on these frequencies.
+# only_scan - Add values to this list to *only* scan on these frequencies.
 # This is for when you only want to monitor a small set of launch frequencies.
-whitelist = []
+only_scan = []
 
-# Black-List - Any values added to this list will be removed from the list of detected peaks.
+# never_scan - Any values added to this list will be removed from the list of detected peaks.
 # This is used to remove known spurs or other interferers from the scan list, potentially speeding up detection of a sonde.
-blacklist = []
+never_scan = []
 
-# Grey-List - Any values in this list will be added to the start every scan run.
+# always_scan - Any values in this list will be added to the start every scan run.
 # This is useful when you know the regular frequency of a local sonde, but still want to allow detections on other frequencies.
-greylist = []
-
-
-
+always_scan = []
 
 
 ####################
 # STATION LOCATION #
 ####################
-# Used by the Habitat Uploader, APRS Uploader, and by Rotator Control
+# Used by the Sondehub Uploader, APRS Uploader, and by Rotator Control
+# Lat/Lon in decimal degrees, altitude in metres.
+# Note: You do not need to specify your home station accurately if you don't want to!
+# Feel free to use a position somewhere near your general area, that doesn't identify your home location.
 [location]
 station_lat = 0.0
 station_lon = 0.0
 station_alt = 0.0
-
-# Location Code (Maximum 5 characters)
-# This is ONLY used by the Intermet iMet decoder, to provide additional entropy when
-# generating a unique ID for the iMet sondes, which do not transmit their serial number. 
-# If you know the WMO number of the launch site, then this would be a good value to use. 
-# Otherwise the ICAO Code of the airport nearest to the launch site would also work.
-# If you are not expecting to RX iMet sondes, then this can be left at its default.
-# NOTE: Only change this if you are 100% sure you will only be receiving sondes from a single launch location!
-station_code = SONDE
 
 # Station Position from GPSD
 # If your station is likely to move, then you may wish to have your station position updated from GPSD.
 # NOTE: This feature is intended to make life slightly easier when using an auto_rx station in a portable
 # capacity, in particular when using a rotator. For the web interface to start up correctly, a lat/lon still
 # needs to be entered above.
-# For balloon chasing, chasemapper is much better suited: https://github.com/projecthorus/chasemapper
+# If you are operating a stationary auto_rx station, please just set a fixed position above rather than using GPSD.
+#
+# If you are doing mobile balloon chasing, please use chasemapper ( https://github.com/projecthorus/chasemapper )
+# which is far beter suited than auto_rx by itself...
 gpsd_enabled = False
-gpsd_hostname = localhost
+gpsd_host = localhost
 gpsd_port = 2947
 
 
-###########################
-# HABITAT UPLOAD SETTINGS #
-###########################
-# Settings for uploading to the Habitat HAB tracking database ( https://tracker.habhub.org/ )
-#   Note that the habitat upload will use a fixed string format of:
-#  `$$<payload_callsign>,<sequence number>,<time>,<lat>,<lon>,<alt>,<speed>,<temp>,<humidity>,<comment>*<CRC16>`
-#   Where callsign is set below. Temp values are only supported on the RS41 at this time.
-#   If you use a custom payload callsign, you will need to create an appropriate payload document for it to appear on the map
-# 
+###################################################
+# SONDEHUB / HABITAT (deprecated) UPLOAD SETTINGS #
+###################################################
+#
+# Settings relating to uploads to the SondeHub v2 Database and tracker,
+# available at https://tracker.sondehub.org/
+#
+# Note that uploads to the Habitat (amateur HAB) database are now disabled,
+# and any references to Habitat in this config are for legacy reasons only.
 [habitat]
-habitat_enabled = False
 
-# Uploader callsign, as shown above. PLEASE CHANGE THIS TO SOMETHING UNIQUE.
+# Uploader callsign. PLEASE CHANGE THIS TO SOMETHING UNIQUE.
 uploader_callsign = CHANGEME_AUTO_RX
 
-# Upload listener position to Habitat? (So you show up on the map)
+# Upload listener position to Sondehub? (So you show up on the map)
+# Note that if GPSD is used, this is overriden and enabled.
 upload_listener_position = True
 
 # Uploader Antenna Description.
 # If upload_listener_position is enabled, this information will show up in your station description on the habhub map.
 uploader_antenna = 1/4 wave monopole
 
-# Habitat Upload Rate - Upload a packet every X seconds.
-# IMPORTANT NOTE: Please remember that the use of Habitat for tracking radiosondes is secondary to its primary purpose of
-# tracking amateur high-altitude balloon flights. It is STRONGLY RECOMMENDED that the update rate is not set to anything 
-# lower than 30 seconds, to avoid congesting the system and causing higher processing latencies. If this becomes a problem, 
-# then we may have to implement server-side rate-limiting to avoid affecting performance.
-upload_rate = 30
+[sondehub]
+# Enable uploading to Sondehub v2 - please leave this enabled!
+sondehub_enabled = True
 
-# Payload callsign - if set to <id> will use the serial number of the sonde and create a payload document automatically
-# WARNING - If running multiple RTLSDRs, setting this to a fixed callsign will result in odd behaviour on the online tracker.
-# DO NOT SET THIS TO ANYTHING OTHER THAN <id> IF YOU ARE USING MORE THAN ONE SDR!
-payload_callsign = <id>
+# How often to push data to the SondeHub Database. (seconds)
+# All received positions are cached and uploaded every X seconds. 
+# Uploads are gzip compressed, so don't require much data transfer.
+sondehub_upload_rate = 15
+
+# An optional contact e-mail address.
+# This e-mail address will *only* be available to the Sondehub admins, and will *only*
+# be used to contact you if there is an obvious issue with your station.
+# We recommend that you join the radiosonde_auto_rx mailing list to receive updates:
+# https://groups.google.com/forum/#!forum/radiosonde_auto_rx
+sondehub_contact_email = none@none.com
 
 
 
@@ -158,10 +166,16 @@ aprs_enabled = False
 
 # APRS-IS Login Information
 # The aprs_user field can have an SSID on the end if desired, i.e. N0CALL-4
+# If you are a licensed amateur radio operator, you may want to change the aprs_port number below 
+# to 14580, so that your uploaded telemetry makes its way out to the wider APRS network.
 aprs_user = N0CALL
+# APRS-IS Passcode. You can generate one for your callsign here: https://apps.magicbug.co.uk/passcode/
 aprs_pass = 00000
 
 # APRS Upload Rate - Upload a packet every X seconds.
+# This has a lower limit of 30 seconds, to avoid flooding the APRS-IS network.
+# Please be respectful of other uses of the APRS-IS network, and do not attempt
+# to upload faster than this. 
 upload_rate = 30
 
 # APRS-IS server to upload to.
@@ -170,30 +184,12 @@ upload_rate = 30
 # If you wish to inject packets directly into the APRS-IS network, use rotate.aprs2.net
 aprs_server = radiosondy.info
 
-# Object name / Callsign to be used when uploading to APRS-IS (Max 9 chars)
-# Should be either a callsign with a -11 or -12 suffix (i.e. N0CALL-12),
-# or <id>, which will be replaced with the radiosondes serial number.
-# WARNING - If running multiple RTLSDRs, setting this to a fixed callsign will result in odd behaviour on the online tracker.
-# DO NOT SET THIS TO ANYTHING OTHER THAN <id> IF YOU ARE USING MORE THAN ONE SDR!
-aprs_object_id = <id>
-
-# Select between uploading the radiosonde position as either an APRS Object, or as a position report.
-# False = Upload position as an Object, sourced from <aprs_user>
-# True = Position Report (with emulated iGating via <aprs_user>)
-# Note that if using Position Reports with aprs_object_id set to <id>, then non-AX.25 compatible callsigns will be generated.
-# If in doubt, leave this at False.
-aprs_position_report = False
-
-# The APRS-IS beacon comment. The following fields can be included:
-# <freq> - Sonde Frequency, i.e. 401.520 MHz
-# <type> - Sonde Type (RS94/RS41)
-# <id> - Sonde Serial Number (i.e. M1234567)
-# <vel_v> - Sonde Vertical Velocity (i.e. -5.1m/s)
-# <temp> - Sonde reported temperature. If no temp data available, this will report -273 degC. Only works for RS41s.
-# The default comment (below) is compatible with radiosondy.info's parsers, and should only be modified
-# if absolutely necessary.
-aprs_custom_comment = Clb=<vel_v> t=<temp> <freq> Type=<type> Radiosonde http://bit.ly/2Bj4Sfk
-
+# APRS-IS Port Number to upload to.
+# When using radiosondy.info:
+#   Port 14590 - Packets stay within radiosondy.info. Non-licensed operators can use this.
+#   Port 14580 - Packets are forwarded out to the wider APRS-IS network. Only licensed amateur radio operators should use this!!
+# For all other APRS-IS servers (licensed amateur radio operators only!), use port 14580.
+aprs_port = 14590
 
 # APRS Station Location Beaconing
 # If enabled, you will show up on APRS using the aprs_user callsign set above.
@@ -205,7 +201,7 @@ station_beacon_rate = 30
 
 # Station beacon comment.
 # <version> will be replaced with the current auto_rx version number
-station_beacon_commment = radiosonde_auto_rx SondeGate v<version>
+station_beacon_comment = radiosonde_auto_rx SondeGate v<version>
 
 # Station Beacon Icon
 # The APRS icon to use, as defined in http://www.aprs.org/symbols.html
@@ -215,6 +211,38 @@ station_beacon_commment = radiosonde_auto_rx SondeGate v<version>
 # Satellite Dish = /`    (This is required if you want to show up on radiosondy.info's station list.)
 station_beacon_icon = /`
 
+# Custom Object name / Callsign to be used when uploading telemetry to APRS-IS (Max 9 chars)
+# WARNING: THIS SHOULD BE LEFT AT THE DEFAULT OF <id> UNLESS YOU HAVE A VERY GOOD REASON
+# TO CHANGE IT!
+#
+# Using <id> means the uploads from multiple stations remain consistent, and we don't end up with
+# lots of duplicate sondes on APRS-IS. If you enable the station location beaconing (below), maps
+# like aprs.fi and radiosondy.info will show your station as the receiver.
+#
+# If used, this field should be either a callsign with a -11 or -12 suffix (i.e. N0CALL-12),
+# or <id>, which will be replaced with the radiosondes serial number.
+#
+# WARNING - If running multiple RTLSDRs, setting this to a fixed callsign will result in odd behaviour on the online tracker.
+# DO NOT SET THIS TO ANYTHING OTHER THAN <id> IF YOU ARE USING MORE THAN ONE SDR!
+aprs_object_id = <id>
+
+# Confirmation of the above setting.
+# Set to True to confirm use of the custom object ID set above.
+# Please read the notes above before setting this to True.
+aprs_use_custom_object_id = False
+
+# The APRS-IS beacon comment. The following fields can be included:
+# <freq> - Sonde Frequency, e.g. 401.520 MHz
+# <type> - Sonde Type (e.g. RS41-SG, DFM09, etc....)
+# <id> - Sonde Serial Number (i.e. M1234567)
+# <vel_v> - Sonde Vertical Velocity (i.e. -5.1m/s)
+# <temp> - Sonde reported temperature. If no temp data available, this will report -273 degC. 
+# <humidity> - Sonde reported humidity.
+# <pressure> - Sonde reported pressure
+# <batt> - Battery Voltage (e.g. 3.1V)
+# The default comment (below) is compatible with radiosondy.info's parsers, and should only be modified
+# if absolutely necessary.
+aprs_custom_comment = Clb=<vel_v> t=<temp> h=<humidity> p=<pressure> <freq> Type=<type> ser=<id> Radiosonde
 
 
 ###########################
@@ -242,13 +270,31 @@ payload_summary_enabled = True
 payload_summary_port = 55673
 
 
-
 #######################
 # EMAIL NOTIFICATIONS #
 #######################
 # Sends an email notification to the specified address when a new Sonde is detected
 [email]
 email_enabled = False
+
+# Send an e-mail for each new radiosonde observed.
+launch_notifications = True
+
+# Send e-mails when a radiosonde is detected descending near your station location
+landing_notifications = True
+
+# Range threshold for Landing notifications (km from your station location)
+landing_range_threshold = 30
+
+# Altitude threshold for Landing Notifications (metres)
+# Notifications will only occur for sondes which have been observed descending (>2m/s descent rate) below this altitude
+# for at least 10 observations
+landing_altitude_threshold = 1000
+
+# Enable sending critical error notifications (one that cause auto_rx to completely crash out) via email.
+# WARNING: If an error is persistent and you are running as a systemd service, this could result
+# in many e-mails being sent!
+error_notifications = False
 
 # Server details. Note that usually Port 465 is used for SSL auth, and 587 is used for TLS.
 smtp_server = localhost
@@ -273,7 +319,6 @@ to = someone@example.com
 # <type> - Sonde Type (RS94/RS41)
 # <id> - Sonde Serial Number (i.e. M1234567)
 subject = <type> Sonde launch detected on <freq>: <id>
-
 
 
 ###################
@@ -304,14 +349,12 @@ rotator_home_azimuth = 0.0
 rotator_home_elevation = 0.0
 
 
-
 ###########
 # LOGGING #
 ###########
 [logging]
 # If enabled, a log file will be written to ./log/ for each detected radiosonde.
 per_sonde_log = True
-
 
 
 ###########################
@@ -326,10 +369,18 @@ web_port = 5000
 # Note: The higher this number, the more data the client will need to load in on startup
 archive_age = 120
 
-# Enable some additional controls on the auto_rx web interface. 
-# There is currently no authentication for these features, so use this with caution!
-# Do not set this to True on an internet-facing auto_rx instance!!!
+# Enable control over the scanner, and starting/stopping decoders from the web interface.
+# A password must also be set (below).
+# USERS ENABLE THIS AT THEIR OWN RISK!!
 web_control = False
+
+# Password for controls on the web interface. The main interface will still be publicly available.
+# Note that as the web interface is HTTP-only, this password will be sent over the internet in the clear,
+# so don't re-use passwords!
+web_password = none
+
+# KML refresh rate
+kml_refresh_rate = 10
 
 
 ##################
@@ -346,6 +397,7 @@ save_detection_audio = False
 
 # Save the audio from the output from a sonde decode chain to decode_<SDR_ID>.wav
 # This file is over-written with each new sonde decoded for a particular SDR.
+# This only works for the 'legacy' FM-based demodulators.
 save_decode_audio = False
 
 # Save the decimated IQ data from an experimental sonde decode chain to decode_IQ_<SDR_ID>.bin
@@ -353,7 +405,10 @@ save_decode_audio = False
 # Note: This will use a LOT of disk space.
 save_decode_iq = False
 
-
+# Save raw hexadecimal radiosonde frame data. This is useful to provide data for telemetry analysis.
+# Raw hex data is saved to the logging directory with a filename of format YYYYMMDD-HHMMSS_<type>_<freq>.raw
+# Saving raw data is currently only supported for: RS41, LMS6-1680, LMS6-400, M10, M20, IMET-4
+save_raw_hex = False
 
 #####################
 # ADVANCED SETTINGS #
@@ -390,7 +445,7 @@ temporary_block_time = 120
 synchronous_upload = True
 # Only accept a payload ID as valid until it has been seen N times.
 # This helps avoid corrupted callsigns getting onto the map.
-payload_id_valid = 5
+payload_id_valid = 3
 # Paths to the rtl_fm and rtl_power utilities. If these are on your system path, then you don't need to change these.
 sdr_fm_path = rtl_fm
 sdr_power_path = rtl_power
@@ -400,50 +455,64 @@ sdr_power_path = rtl_power
 # DEMODULATOR / DECODER TWEAKS #
 ################################
 
-# RS41 / LMS6 Drift Tweak (Regular demod chain only)
-# This tweak adds a high-pass filter into the RS41 and LMS6 demod chains. This extends the frequency offset range
-# the demod chain can handle, with some performance penalty. This is only required when using RTLSDRs
-# with worse than 2-3 PPM drift, and doesn't need to be enabled for TCXO SDRs.
-drift_tweak = False
-
 #
-# Experimental Decoders - Use at your own risk!
+# Alternate Decode Chains
 #
-# These experimental demod chains use David Rowe's fsk_demod modem.
+# NOTE: This section will be deprecated soon, with the fsk_demod chains used permanently.
+#
+# These (not so) experimental demod chains use David Rowe's fsk_demod modem.
 # They have much better drift handling performance, and so may be better suited for
 # 1680 MHz sondes, but use considerably more CPU. Recommend use of a Pi 3 or better.
-# The experimental decoders can be enabled independently for each radiosonde type.
-rs41_experimental = False
-rs92_experimental = False
-dfm_experimental = False
-m10_experimental = False
-# 400 MHz LMS6 sondes decode best with the fsk_demod decode chain, so we use this by default.
+# The experimental decoders can be enabled/disabled independently for each radiosonde type.
+# It is recommended that these are always left enabled. 
+rs41_experimental = True
+rs92_experimental = True
+dfm_experimental = True
+m10_experimental = True
 lms6-400_experimental = True
-# Note: As iMet sondes use AFSK, using fsk_demod does not give any advantage, so there is no experimental decoder for them.
+imet54_experimental = True
+# LMS6-1680 Decoder options:
+# False = Less CPU, possibly worse weak-signal performance.
+# True = Higher CPU (Pushing a RPi 3 to its limits), possibly better weak-signal performance.
+lms6-1680_experimental = False
 
-# Dump FSK Demod statistics to stats_<device_ID>.txt while the modem is running.
-# This ends up at ~200mb per flight, and is over-written with each new sonde tracked.
-# The test/plot_fsk_demod_stats.py script can plot these files for debugging purposes.
-# Eventually the modem statistics will be integrated into the web GUI.
-enable_stats = False
+# MRZ sondes have not yet been tested with the fsk_demod flowgraph in the wild.
+# If someone can confirm that this works, I'll set it to True by default!
+mrz_experimental = False
 
+# Note: As iMet-4 sondes use AFSK, using fsk_demod does not give any advantage, so there is no experimental decoder for them.
 
 # Optimize 1680 MHz Scanning for RS92-NGP Sondes
-# This flag sets the use of a narrower FM receiver bandwidth when scanning for 1680 MHz RS92-NGP sondes,
-# which should improve detection considerably.
+# This flag sets the use of IQ detection when scanning for 1680 MHz sondes, which allows RS92-NGP sondes
+# to be detected reliably.
 # Set this to True if you are sure that only RS92-NGPs are flying in your area.
 ngp_tweak = False
 
 
-
-# Position Filtering Options
+######################
+# POSITION FILTERING #
+######################
 #   These are used to discard positions which are clearly bad, such as where the payload has jumped halfway around the world,
 #   or has suddenly ended up in orbit.
-#   Adjust only if absolutely necessary.
+#
+#   Users can also decide to temporary block sondes which are outside of a radius range.
+#
 [filtering]
 # Discard positions with an altitude greater than 50000 metres. 
 max_altitude = 50000
-# Discard positions more than 1000 km from the observation station location (if set)
+
+# Discard positions from sondes which are outside the following min/max radius limits.
+# This requires the ground-station location to be set.
 max_radius_km = 1000
+min_radius_km = 0
 
+# Temporarily block the frequency of sondes which report a position outside of the above limits.
+# WARNING: This may cause sondes which sometimes report glitchy positions (RS92, DFM) to be blocked.
+# (True or False)
+radius_temporary_block = False
 
+# Reported Time Threshold
+# Discard positions if the sonde's reported time is more than X hours from the system time.
+# This helps catch glitches around 00Z UTC from iMet & LMS6 sondes, and bad CRC checks from
+# DFM sondes.
+sonde_time_threshold = 3

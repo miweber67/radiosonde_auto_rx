@@ -7,6 +7,7 @@
 #
 
 from __future__ import division, print_function
+import codecs
 import fcntl
 import logging
 import os
@@ -17,10 +18,12 @@ import subprocess
 import threading
 import time
 import numpy as np
+import semver
 from dateutil.parser import parse
 from datetime import datetime, timedelta
 from math import radians, degrees, sin, cos, atan2, sqrt, pi
 from . import __version__ as auto_rx_version
+
 try:
     # Python 2
     from Queue import Queue
@@ -30,7 +33,22 @@ except ImportError:
 
 
 # List of binaries we check for on startup
-REQUIRED_RS_UTILS = ['dft_detect', 'dfm09mod', 'm10', 'imet1rs_dft', 'rs41mod', 'rs92mod', 'fsk_demod', 'mk2a_lms1680', 'lms6mod']
+REQUIRED_RS_UTILS = [
+    "dft_detect",
+    "dfm09mod",
+    "m10mod",
+    "imet1rs_dft",
+    "rs41mod",
+    "rs92mod",
+    "fsk_demod",
+    "mk2mod",
+    "lms6Xmod",
+    "meisei100mod",
+    "imet54mod",
+    "mp3h1mod",
+    "m20mod",
+]
+
 
 def check_rs_utils():
     """ Check the required RS decoder binaries exist
@@ -44,30 +62,271 @@ def check_rs_utils():
     return True
 
 
-AUTORX_VERSION_URL = "https://raw.githubusercontent.com/projecthorus/radiosonde_auto_rx/master/auto_rx/autorx/__init__.py"
-def check_autorx_version():
-    """ Grab the latest __init__ file from Github and compare the version with our current version. """
+AUTORX_MAIN_VERSION_URL = "https://raw.githubusercontent.com/projecthorus/radiosonde_auto_rx/master/auto_rx/autorx/__init__.py"
+AUTORX_TESTING_VERSION_URL = "https://raw.githubusercontent.com/projecthorus/radiosonde_auto_rx/testing/auto_rx/autorx/__init__.py"
+
+
+def get_autorx_version(version_url=AUTORX_MAIN_VERSION_URL):
+    """ Parse an auto_rx __init__ file and return the version """
     try:
-        _r = requests.get(AUTORX_VERSION_URL,timeout=5)
+        _r = requests.get(version_url, timeout=5)
     except Exception as e:
-        logging.error("Version - Error determining latest master version - %s" % str(e))
-        return
-
-    _version = "Unknown"
+        logging.error(
+            f"Version - Error determining version from URL {version_url}: {str(e)}"
+        )
+        return None
 
     try:
-        for _line in _r.text.split('\n'):
+        for _line in _r.text.split("\n"):
             if _line.startswith("__version__"):
-                _version = _line.split('=')[1]
-                _version = _version.replace("\"", "").strip()
-                break
+                _main_version = _line.split("=")[1]
+                _main_version = _main_version.replace('"', "").strip()
+                return _main_version
+
     except Exception as e:
-        logging.error("Version - Error determining latest master version.")
+        logging.error(
+            f"Version - Error extracting version from url {version_url}: {str(e)}."
+        )
+        return None
 
-    logging.info("Version - Local Version: %s  Current Master Version: %s" % (auto_rx_version, _version))
+
+def check_autorx_versions(current_version=auto_rx_version):
+    """
+        Check the current auto_rx version against the latest main and testing branches.
+        Returns a string 'Latest' if this is the latest version, or the newer version if
+        there is an update available. Returns 'Unknown' if the version could not be determined.
+    """
+
+    # Grab the current versions
+    _main_branch_version = get_autorx_version(AUTORX_MAIN_VERSION_URL)
+    _testing_branch_version = get_autorx_version(AUTORX_TESTING_VERSION_URL)
+
+    if (_main_branch_version is None) or (_testing_branch_version is None):
+        logging.error("Version - Could not determine latest versions.")
+        return "Unknown"
+
+    # First, determine if the user is on a main or beta (testing) version
+    # We use the presence of a '-' in the version name to figure this out.
+    if "-" in current_version:
+        # User is on a testing branch version.
+        # Compare against the testing branch version - when a release is made, the testing
+        # branch will have the same version as the main branch, then will advance.
+        if semver.compare(_testing_branch_version, current_version) == 1:
+            # Newer testing version available.
+            return _testing_branch_version
+        else:
+            # User is on latest testing branch version.
+            return "Latest"
+    else:
+        # User is running the main branch
+        if semver.compare(_main_branch_version, current_version) == 1:
+            return _main_branch_version
+        else:
+            return "Latest"
+
+    # Should never get here.
+    return "Unknown"
 
 
+def version_startup_check():
+    """ Helper function to check version on startup """
+    _newer_version = check_autorx_versions()
+    if _newer_version == "Latest":
+        logging.info(f"Version - Local Version: {auto_rx_version} - Up to date!")
+    elif _newer_version == "Unknown":
+        # An error will have already been printed out for this case.
+        pass
+    else:
+        logging.info(
+            f"Version - Local Version: {auto_rx_version} - Newer Version Available! ({_newer_version})"
+        )
 
+
+def strip_sonde_serial(serial):
+    """ Strip off any leading sonde type that may be present in a serial number """
+
+    # Look for serials with prefixes matching the following known sonde types.
+    _re = re.compile("^(DFM|M10|M20|IMET|IMET5|IMET54|MRZ|LMS6)-")
+
+    # If we have a match, return the trailing part of the serial, re-adding
+    # any - separators if they exist.
+    if _re.match(serial):
+        return "-".join(serial.split("-")[1:])
+    else:
+        # Otherwise, it's probably a RS41 or RS92
+        return serial
+
+
+def short_type_lookup(type_name):
+    """ Lookup a short type name to a more descriptive name """
+
+    if type_name.startswith("RS41"):
+        if type_name == "RS41":
+            return "Vaisala RS41"
+        else:
+            return "Vaisala " + type_name
+    elif type_name.startswith("RS92"):
+        if type_name == "RS92":
+            return "Vaisala RS92"
+        else:
+            return "Vaisala " + type_name
+    elif type_name.startswith("DFM"):
+        return "Graw " + type_name
+    elif type_name.startswith("M10"):
+        return "Meteomodem M10"
+    elif type_name.startswith("M20"):
+        return "Meteomodem M20"
+    elif type_name == "LMS6":
+        return "Lockheed Martin LMS6-403"
+    elif type_name == "MK2LMS":
+        return "Lockheed Martin LMS6-1680"
+    elif type_name == "IMET":
+        return "Intermet Systems iMet-1/4"
+    elif type_name == "IMET5":
+        return "Intermet Systems iMet-5x"
+    elif type_name == "MEISEI":
+        return "Meisei iMS-100/RS-11"
+    elif type_name == "MRZ":
+        return "Meteo-Radiy MRZ"
+    else:
+        return "Unknown"
+
+def short_short_type_lookup(type_name):
+    """ Lookup a short type name to a more descriptive, but short name """
+
+    if type_name.startswith("RS41"):
+        if type_name == "RS41":
+            return "RS41"
+        else:
+            return type_name
+    elif type_name.startswith("RS92"):
+        if type_name == "RS92":
+            return "RS92"
+        else:
+            return type_name
+    elif type_name.startswith("DFM"):
+        return type_name
+    elif type_name.startswith("M10"):
+        return "M10"
+    elif type_name.startswith("M20"):
+        return "M20"
+    elif type_name == "LMS6":
+        return "LMS6-403"
+    elif type_name == "MK2LMS":
+        return "LMS6-1680"
+    elif type_name == "IMET":
+        return "iMet-1/4"
+    elif type_name == "IMET5":
+        return "iMet-5x"
+    elif type_name == "MEISEI":
+        return "iMS-100"
+    elif type_name == "MRZ":
+        return "MRZ"
+    else:
+        return "Unknown"
+
+
+def generate_aprs_id(sonde_data):
+        """ Generate an APRS-compatible object name based on the radiosonde type and ID. """
+
+        _object_name = None
+
+        # Use the radiosonde ID as the object ID
+        if ("RS92" in sonde_data["type"]) or ("RS41" in sonde_data["type"]):
+            # We can use the Vaisala sonde ID directly.
+            _object_name = sonde_data["id"].strip()
+        elif "DFM" in sonde_data["type"]:
+            # As per agreement with other radiosonde decoding software developers, we will now
+            # use the DFM serial number verbatim in the APRS ID, prefixed with 'D'.
+            # For recent DFM sondes, this will result in a object ID of: Dyynnnnnn
+            # Where yy is the manufacture year, and nnnnnn is a sequential serial.
+            # Older DFMs may have only a 6-digit ID of Dnnnnnn.
+            # Mark J - 2019-12-29
+
+            # Split out just the serial number part of the ID, and cast it to an int
+            # This acts as another check that we have been provided with a numeric serial.
+            _dfm_id = int(sonde_data["id"].split("-")[-1])
+
+            # Create the object name
+            _object_name = "D%d" % _dfm_id
+
+            # Convert to upper-case hex, and take the last 5 nibbles.
+            _id_suffix = hex(_dfm_id).upper()[-5:]
+
+        elif "M10" in sonde_data["type"]:
+            # Use the generated id same as dxlAPRS
+            _object_name = sonde_data["aprsid"]
+
+        elif "M20" in sonde_data["type"]:
+            # Generate the M20 ID based on the first two hex digits of the
+            # raw hexadecimal id, followed by the last decimal section.
+            # Why we do this and not just use the three hex bytes, nobody knows...
+            if 'rawid' in sonde_data:
+                _object_name = "ME" + sonde_data['rawid'].split('_')[1][:2] + sonde_data["id"].split("-")[-1]
+            else:
+                _object_name = None
+
+        elif "IMET" in sonde_data["type"]:
+            # Use the last 5 characters of the unique ID we have generated.
+            _object_name = "IMET" + sonde_data["id"][-5:]
+
+
+        elif "LMS" in sonde_data["type"]:
+            # Use the last 5 hex digits of the sonde ID.
+            _id_suffix = int(sonde_data["id"].split("-")[1])
+            _id_hex = hex(_id_suffix).upper()
+            _object_name = "LMS6" + _id_hex[-5:]
+
+        elif "MEISEI" in sonde_data["type"]:
+            # Convert the serial number to an int
+            _meisei_id = int(sonde_data["id"].split("-")[-1])
+            _id_suffix = hex(_meisei_id).upper().split("0X")[1]
+            # Clip to 6 hex digits, in case we end up with more for some reason.
+            if len(_id_suffix) > 6:
+                _id_suffix = _id_suffix[-6:]
+            _object_name = "IMS" + _id_suffix
+
+        elif "MRZ" in sonde_data["type"]:
+            # Concatenate the two portions of the serial number, convert to an int,
+            # then take the 6 least-significant hex digits as our ID, prefixed with 'MRZ'.
+            # e.g. MRZ-5667-39155 -> 566739155 -> 21C7C0D3 -> MRZC7C0D3
+            _mrz_id_parts = sonde_data["id"].split("-")
+            _mrz_id = int(_mrz_id_parts[1] + _mrz_id_parts[2])
+            _id_hex = "%06x" % _mrz_id
+            if len(_id_hex) > 6:
+                _id_hex = _id_hex[-6:]
+            _object_name = "MRZ" + _id_hex.upper()
+
+        # New Sonde types will be added in here.
+        else:
+            # Unknown sonde type, don't know how to handle this yet.
+            _object_name = None
+
+        # Pad or clip to 9 characters
+        if len(_object_name) > 9:
+            _object_name = _object_name[:9]
+        elif len(_object_name) < 9:
+            _object_name = _object_name + " " * (9 - len(_object_name))
+
+        return _object_name
+
+
+def readable_timedelta(duration: timedelta):
+    """
+    Convert a timedelta into a readable string.
+    From: https://codereview.stackexchange.com/a/245215
+    """
+    data = {}
+    data["months"], remaining = divmod(duration.total_seconds(), 2_592_000)
+    data["days"], remaining = divmod(remaining, 86_400)
+    data["hours"], remaining = divmod(remaining, 3_600)
+    data["minutes"], _foo = divmod(remaining, 60)
+
+    time_parts = [f"{round(value)} {name}" for name, value in data.items() if value > 0]
+    if time_parts:
+        return " ".join(time_parts)
+    else:
+        return "below 1 second"
 
 
 class AsynchronousFileReader(threading.Thread):
@@ -114,7 +373,6 @@ class AsynchronousFileReader(threading.Thread):
         """
         self.running = False
 
-
     def readlines(self):
         """
         Get currently available lines.
@@ -128,8 +386,17 @@ class AsynchronousFileReader(threading.Thread):
 #
 
 
-def detect_peaks(x, mph=None, mpd=1, threshold=0, edge='rising',
-                 kpsh=False, valley=False, show=False, ax=None):
+def detect_peaks(
+    x,
+    mph=None,
+    mpd=1,
+    threshold=0,
+    edge="rising",
+    kpsh=False,
+    valley=False,
+    show=False,
+    ax=None,
+):
 
     """Detect peaks in data based on their amplitude and other features.
 
@@ -168,8 +435,8 @@ def detect_peaks(x, mph=None, mpd=1, threshold=0, edge='rising',
     -----
     The detection of valleys instead of peaks is performed internally by simply
     negating the data: `ind_valleys = detect_peaks(-x)`
-    
-    The function can handle NaN's 
+
+    The function can handle NaN's
 
     See this IPython Notebook [1]_.
 
@@ -207,7 +474,7 @@ def detect_peaks(x, mph=None, mpd=1, threshold=0, edge='rising',
     >>> detect_peaks(x, threshold = 2, show=True)
     """
 
-    x = np.atleast_1d(x).astype('float64')
+    x = np.atleast_1d(x).astype("float64")
     if x.size < 3:
         return np.array([], dtype=int)
     if valley:
@@ -223,26 +490,30 @@ def detect_peaks(x, mph=None, mpd=1, threshold=0, edge='rising',
     if not edge:
         ine = np.where((np.hstack((dx, 0)) < 0) & (np.hstack((0, dx)) > 0))[0]
     else:
-        if edge.lower() in ['rising', 'both']:
+        if edge.lower() in ["rising", "both"]:
             ire = np.where((np.hstack((dx, 0)) <= 0) & (np.hstack((0, dx)) > 0))[0]
-        if edge.lower() in ['falling', 'both']:
+        if edge.lower() in ["falling", "both"]:
             ife = np.where((np.hstack((dx, 0)) < 0) & (np.hstack((0, dx)) >= 0))[0]
     ind = np.unique(np.hstack((ine, ire, ife)))
     # handle NaN's
     if ind.size and indnan.size:
         # NaN's and values close to NaN's cannot be peaks
-        ind = ind[np.in1d(ind, np.unique(np.hstack((indnan, indnan-1, indnan+1))), invert=True)]
+        ind = ind[
+            np.in1d(
+                ind, np.unique(np.hstack((indnan, indnan - 1, indnan + 1))), invert=True
+            )
+        ]
     # first and last values of x cannot be peaks
     if ind.size and ind[0] == 0:
         ind = ind[1:]
-    if ind.size and ind[-1] == x.size-1:
+    if ind.size and ind[-1] == x.size - 1:
         ind = ind[:-1]
     # remove peaks < minimum peak height
     if ind.size and mph is not None:
         ind = ind[x[ind] >= mph]
     # remove peaks - neighbors < threshold
     if ind.size and threshold > 0:
-        dx = np.min(np.vstack([x[ind]-x[ind-1], x[ind]-x[ind+1]]), axis=0)
+        dx = np.min(np.vstack([x[ind] - x[ind - 1], x[ind] - x[ind + 1]]), axis=0)
         ind = np.delete(ind, np.where(dx < threshold)[0])
     # detect small peaks closer than minimum peak distance
     if ind.size and mpd > 1:
@@ -251,8 +522,9 @@ def detect_peaks(x, mph=None, mpd=1, threshold=0, edge='rising',
         for i in range(ind.size):
             if not idel[i]:
                 # keep peaks with the same height if kpsh is True
-                idel = idel | (ind >= ind[i] - mpd) & (ind <= ind[i] + mpd) \
-                    & (x[ind[i]] > x[ind] if kpsh else True)
+                idel = idel | (ind >= ind[i] - mpd) & (ind <= ind[i] + mpd) & (
+                    x[ind[i]] > x[ind] if kpsh else True
+                )
                 idel[i] = 0  # Keep current peak
         # remove the small peaks and sort back the indices by their occurrence
         ind = np.sort(ind[~idel])
@@ -272,32 +544,39 @@ def peak_plot(x, mph, mpd, threshold, edge, valley, ax, ind):
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        print('matplotlib is not available.')
+        print("matplotlib is not available.")
     else:
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(8, 4))
 
-        ax.plot(x, 'b', lw=1)
+        ax.plot(x, "b", lw=1)
         if ind.size:
-            label = 'valley' if valley else 'peak'
-            label = label + 's' if ind.size > 1 else label
-            ax.plot(ind, x[ind], '+', mfc=None, mec='r', mew=2, ms=8,
-                    label='%d %s' % (ind.size, label))
-            ax.legend(loc='best', framealpha=.5, numpoints=1)
-        ax.set_xlim(-.02*x.size, x.size*1.02-1)
+            label = "valley" if valley else "peak"
+            label = label + "s" if ind.size > 1 else label
+            ax.plot(
+                ind,
+                x[ind],
+                "+",
+                mfc=None,
+                mec="r",
+                mew=2,
+                ms=8,
+                label="%d %s" % (ind.size, label),
+            )
+            ax.legend(loc="best", framealpha=0.5, numpoints=1)
+        ax.set_xlim(-0.02 * x.size, x.size * 1.02 - 1)
         ymin, ymax = x[np.isfinite(x)].min(), x[np.isfinite(x)].max()
         yrange = ymax - ymin if ymax > ymin else 1
-        ax.set_ylim(ymin - 0.1*yrange, ymax + 0.1*yrange)
-        ax.set_xlabel('Data #', fontsize=14)
-        ax.set_ylabel('Amplitude', fontsize=14)
-        mode = 'Valley detection' if valley else 'Peak detection'
-        ax.set_title("%s (mph=%s, mpd=%d, threshold=%s, edge='%s')"
-                     % (mode, str(mph), mpd, str(threshold), edge))
+        ax.set_ylim(ymin - 0.1 * yrange, ymax + 0.1 * yrange)
+        ax.set_xlabel("Data #", fontsize=14)
+        ax.set_ylabel("Amplitude", fontsize=14)
+        mode = "Valley detection" if valley else "Peak detection"
+        ax.set_title(
+            "%s (mph=%s, mpd=%d, threshold=%s, edge='%s')"
+            % (mode, str(mph), mpd, str(threshold), edge)
+        )
         # plt.grid()
         plt.show()
-
-
-
 
 
 #
@@ -305,60 +584,60 @@ def peak_plot(x, mph, mpd, threshold, edge, valley, ax, ind):
 #
 
 # Regexes to help parse lsusb's output
-_INDENTATION_RE = re.compile(r'^( *)')
-_LSUSB_BUS_DEVICE_RE = re.compile(r'^Bus (\d{3}) Device (\d{3}):')
-_LSUSB_ENTRY_RE = re.compile(r'^ *([^ ]+) +([^ ]+) *([^ ].*)?$')
-_LSUSB_GROUP_RE = re.compile(r'^ *([^ ]+.*):$')
+_INDENTATION_RE = re.compile(r"^( *)")
+_LSUSB_BUS_DEVICE_RE = re.compile(r"^Bus (\d{3}) Device (\d{3}):")
+_LSUSB_ENTRY_RE = re.compile(r"^ *([^ ]+) +([^ ]+) *([^ ].*)?$")
+_LSUSB_GROUP_RE = re.compile(r"^ *([^ ]+.*):$")
 
 # USB Reset ioctl argument
-_USBDEVFS_RESET = ord('U') << 8 | 20
+_USBDEVFS_RESET = ord("U") << 8 | 20
 
 # List of known RTLSDR-Compatible devices, taken from
 # https://github.com/steve-m/librtlsdr/blob/master/src/librtlsdr.c#L313
 KNOWN_RTLSDR_DEVICES = [
-    [ '0x0bda', '0x2832', "Generic RTL2832U" ],
-    [ '0x0bda', '0x2838', "Generic RTL2832U OEM" ],
-    [ '0x0413', '0x6680', "DigitalNow Quad DVB-T PCI-E card" ],
-    [ '0x0413', '0x6f0f', "Leadtek WinFast DTV Dongle mini D" ],
-    [ '0x0458', '0x707f', "Genius TVGo DVB-T03 USB dongle (Ver. B)" ],
-    [ '0x0ccd', '0x00a9', "Terratec Cinergy T Stick Black (rev 1)" ],
-    [ '0x0ccd', '0x00b3', "Terratec NOXON DAB/DAB+ USB dongle (rev 1)" ],
-    [ '0x0ccd', '0x00b4', "Terratec Deutschlandradio DAB Stick" ],
-    [ '0x0ccd', '0x00b5', "Terratec NOXON DAB Stick - Radio Energy" ],
-    [ '0x0ccd', '0x00b7', "Terratec Media Broadcast DAB Stick" ],
-    [ '0x0ccd', '0x00b8', "Terratec BR DAB Stick" ],
-    [ '0x0ccd', '0x00b9', "Terratec WDR DAB Stick" ],
-    [ '0x0ccd', '0x00c0', "Terratec MuellerVerlag DAB Stick" ],
-    [ '0x0ccd', '0x00c6', "Terratec Fraunhofer DAB Stick" ],
-    [ '0x0ccd', '0x00d3', "Terratec Cinergy T Stick RC (Rev.3)" ],
-    [ '0x0ccd', '0x00d7', "Terratec T Stick PLUS" ],
-    [ '0x0ccd', '0x00e0', "Terratec NOXON DAB/DAB+ USB dongle (rev 2)" ],
-    [ '0x1554', '0x5020', "PixelView PV-DT235U(RN)" ],
-    [ '0x15f4', '0x0131', "Astrometa DVB-T/DVB-T2" ],
-    [ '0x15f4', '0x0133', "HanfTek DAB+FM+DVB-T" ],
-    [ '0x185b', '0x0620', "Compro Videomate U620F"],
-    [ '0x185b', '0x0650', "Compro Videomate U650F"],
-    [ '0x185b', '0x0680', "Compro Videomate U680F"],
-    [ '0x1b80', '0xd393', "GIGABYTE GT-U7300" ],
-    [ '0x1b80', '0xd394', "DIKOM USB-DVBT HD" ],
-    [ '0x1b80', '0xd395', "Peak 102569AGPK" ],
-    [ '0x1b80', '0xd397', "KWorld KW-UB450-T USB DVB-T Pico TV" ],
-    [ '0x1b80', '0xd398', "Zaapa ZT-MINDVBZP" ],
-    [ '0x1b80', '0xd39d', "SVEON STV20 DVB-T USB & FM" ],
-    [ '0x1b80', '0xd3a4', "Twintech UT-40" ],
-    [ '0x1b80', '0xd3a8', "ASUS U3100MINI_PLUS_V2" ],
-    [ '0x1b80', '0xd3af', "SVEON STV27 DVB-T USB & FM" ],
-    [ '0x1b80', '0xd3b0', "SVEON STV21 DVB-T USB & FM" ],
-    [ '0x1d19', '0x1101', "Dexatek DK DVB-T Dongle (Logilink VG0002A)" ],
-    [ '0x1d19', '0x1102', "Dexatek DK DVB-T Dongle (MSI DigiVox mini II V3.0)" ],
-    [ '0x1d19', '0x1103', "Dexatek Technology Ltd. DK 5217 DVB-T Dongle" ],
-    [ '0x1d19', '0x1104', "MSI DigiVox Micro HD" ],
-    [ '0x1f4d', '0xa803', "Sweex DVB-T USB" ],
-    [ '0x1f4d', '0xb803', "GTek T803" ],
-    [ '0x1f4d', '0xc803', "Lifeview LV5TDeluxe" ],
-    [ '0x1f4d', '0xd286', "MyGica TD312" ],
-    [ '0x1f4d', '0xd803', "PROlectrix DV107669" ],
-    ]
+    ["0x0bda", "0x2832", "Generic RTL2832U"],
+    ["0x0bda", "0x2838", "Generic RTL2832U OEM"],
+    ["0x0413", "0x6680", "DigitalNow Quad DVB-T PCI-E card"],
+    ["0x0413", "0x6f0f", "Leadtek WinFast DTV Dongle mini D"],
+    ["0x0458", "0x707f", "Genius TVGo DVB-T03 USB dongle (Ver. B)"],
+    ["0x0ccd", "0x00a9", "Terratec Cinergy T Stick Black (rev 1)"],
+    ["0x0ccd", "0x00b3", "Terratec NOXON DAB/DAB+ USB dongle (rev 1)"],
+    ["0x0ccd", "0x00b4", "Terratec Deutschlandradio DAB Stick"],
+    ["0x0ccd", "0x00b5", "Terratec NOXON DAB Stick - Radio Energy"],
+    ["0x0ccd", "0x00b7", "Terratec Media Broadcast DAB Stick"],
+    ["0x0ccd", "0x00b8", "Terratec BR DAB Stick"],
+    ["0x0ccd", "0x00b9", "Terratec WDR DAB Stick"],
+    ["0x0ccd", "0x00c0", "Terratec MuellerVerlag DAB Stick"],
+    ["0x0ccd", "0x00c6", "Terratec Fraunhofer DAB Stick"],
+    ["0x0ccd", "0x00d3", "Terratec Cinergy T Stick RC (Rev.3)"],
+    ["0x0ccd", "0x00d7", "Terratec T Stick PLUS"],
+    ["0x0ccd", "0x00e0", "Terratec NOXON DAB/DAB+ USB dongle (rev 2)"],
+    ["0x1554", "0x5020", "PixelView PV-DT235U(RN)"],
+    ["0x15f4", "0x0131", "Astrometa DVB-T/DVB-T2"],
+    ["0x15f4", "0x0133", "HanfTek DAB+FM+DVB-T"],
+    ["0x185b", "0x0620", "Compro Videomate U620F"],
+    ["0x185b", "0x0650", "Compro Videomate U650F"],
+    ["0x185b", "0x0680", "Compro Videomate U680F"],
+    ["0x1b80", "0xd393", "GIGABYTE GT-U7300"],
+    ["0x1b80", "0xd394", "DIKOM USB-DVBT HD"],
+    ["0x1b80", "0xd395", "Peak 102569AGPK"],
+    ["0x1b80", "0xd397", "KWorld KW-UB450-T USB DVB-T Pico TV"],
+    ["0x1b80", "0xd398", "Zaapa ZT-MINDVBZP"],
+    ["0x1b80", "0xd39d", "SVEON STV20 DVB-T USB & FM"],
+    ["0x1b80", "0xd3a4", "Twintech UT-40"],
+    ["0x1b80", "0xd3a8", "ASUS U3100MINI_PLUS_V2"],
+    ["0x1b80", "0xd3af", "SVEON STV27 DVB-T USB & FM"],
+    ["0x1b80", "0xd3b0", "SVEON STV21 DVB-T USB & FM"],
+    ["0x1d19", "0x1101", "Dexatek DK DVB-T Dongle (Logilink VG0002A)"],
+    ["0x1d19", "0x1102", "Dexatek DK DVB-T Dongle (MSI DigiVox mini II V3.0)"],
+    ["0x1d19", "0x1103", "Dexatek Technology Ltd. DK 5217 DVB-T Dongle"],
+    ["0x1d19", "0x1104", "MSI DigiVox Micro HD"],
+    ["0x1f4d", "0xa803", "Sweex DVB-T USB"],
+    ["0x1f4d", "0xb803", "GTek T803"],
+    ["0x1f4d", "0xc803", "Lifeview LV5TDeluxe"],
+    ["0x1f4d", "0xd286", "MyGica TD312"],
+    ["0x1f4d", "0xd803", "PROlectrix DV107669"],
+]
 
 
 def lsusb():
@@ -368,11 +647,11 @@ def lsusb():
         (list): List of dictionaries containing the device information for each USB device.
     """
     try:
-        FNULL = open(os.devnull, 'w')
-        lsusb_raw_output = subprocess.check_output(['lsusb', '-v'], stderr=FNULL)
+        FNULL = open(os.devnull, "w")
+        lsusb_raw_output = subprocess.check_output(["lsusb", "-v"], stderr=FNULL)
         FNULL.close()
         # Convert from bytes.
-        lsusb_raw_output = lsusb_raw_output.decode('utf8')
+        lsusb_raw_output = lsusb_raw_output.decode("utf8")
     except Exception as e:
         logging.error("lsusb parse error - %s" % str(e))
         return
@@ -390,10 +669,7 @@ def lsusb():
         if not device:
             m = _LSUSB_BUS_DEVICE_RE.match(line)
             if m:
-                device = {
-                    'bus': m.group(1),
-                    'device': m.group(2)
-                }
+                device = {"bus": m.group(1), "device": m.group(2)}
                 depth_stack = [device]
             continue
 
@@ -421,8 +697,8 @@ def lsusb():
         m = _LSUSB_ENTRY_RE.match(line)
         if m:
             new_entry = {
-                '_value': m.group(2),
-                '_desc': m.group(3),
+                "_value": m.group(2),
+                "_desc": m.group(3),
             }
             cur[m.group(1)] = new_entry
             depth_stack.append(new_entry)
@@ -431,16 +707,35 @@ def lsusb():
         logging.debug('lsusb parsing error: unrecognized line: "%s"', line)
 
     if device:
-      devices.append(device)
+        devices.append(device)
 
     return devices
 
 
+def is_not_linux():
+    """
+    Attempt to detect a non-native-Linux system (e.g. OSX or WSL),
+    where lsusb isn't going to work.
+    """
+    # Basic check for non-Linux platforms (e.g. Darwin or Windows)
+    if platform.system() != "Linux":
+        return True
+
+    # Second check for the existence of '-Microsoft' in the uname release field.
+    # This is a good check that we are running in WSL.
+    # Note the use of indexing instead of the named field, for Python 2 & 3 compatability.
+    if "Microsoft" in platform.uname()[2]:
+        return True
+
+    # Else, we're probably in native Linux!
+    return False
+
+
 def reset_usb(bus, device):
     """Reset the USB device with the given bus and device."""
-    usb_file_path = '/dev/bus/usb/%03d/%03d' % (bus, device)
-    with open(usb_file_path, 'w') as usb_file:
-        #logging.debug('fcntl.ioctl(%s, %d)', usb_file_path, _USBDEVFS_RESET)
+    usb_file_path = "/dev/bus/usb/%03d/%03d" % (bus, device)
+    with open(usb_file_path, "w") as usb_file:
+        # logging.debug('fcntl.ioctl(%s, %d)', usb_file_path, _USBDEVFS_RESET)
         try:
             fcntl.ioctl(usb_file, _USBDEVFS_RESET)
 
@@ -448,7 +743,7 @@ def reset_usb(bus, device):
             logging.error("RTLSDR - USB Reset Failed.")
 
 
-def is_rtlsdr(vid,pid):
+def is_rtlsdr(vid, pid):
     """ Check if a device with given VID/PID is a known RTLSDR """
     for _dev in KNOWN_RTLSDR_DEVICES:
         _vid = _dev[0]
@@ -463,7 +758,8 @@ def reset_rtlsdr_by_serial(serial):
     """ Attempt to reset a RTLSDR with a provided serial number """
 
     # If not Linux, return immediately.
-    if platform.system() != 'Linux':
+    if is_not_linux():
+        logging.debug("RTLSDR - Not a native Linux system, skipping reset attempt.")
         return
 
     lsusb_info = lsusb()
@@ -472,20 +768,23 @@ def reset_rtlsdr_by_serial(serial):
 
     for device in lsusb_info:
         try:
-            device_serial = device['Device Descriptor']['iSerial']['_desc']
-            device_product = device['Device Descriptor']['iProduct']['_desc']
-            device_pid = device['Device Descriptor']['idProduct']['_value']
-            device_vid = device['Device Descriptor']['idVendor']['_value']
+            device_serial = device["Device Descriptor"]["iSerial"]["_desc"]
+            device_product = device["Device Descriptor"]["iProduct"]["_desc"]
+            device_pid = device["Device Descriptor"]["idProduct"]["_value"]
+            device_vid = device["Device Descriptor"]["idVendor"]["_value"]
         except:
             # If we hit an exception, the device likely doesn't have one of the required fields.
             continue
 
-        if (device_serial == serial) and is_rtlsdr(device_vid, device_pid) :
-            bus_num = int(device['bus'])
-            device_num = int(device['device'])
+        if (device_serial == serial) and is_rtlsdr(device_vid, device_pid):
+            bus_num = int(device["bus"])
+            device_num = int(device["device"])
 
     if bus_num and device_num:
-        logging.info("RTLSDR - Attempting to reset: /dev/bus/usb/%03d/%03d" % (bus_num, device_num))
+        logging.info(
+            "RTLSDR - Attempting to reset: /dev/bus/usb/%03d/%03d"
+            % (bus_num, device_num)
+        )
         reset_usb(bus_num, device_num)
     else:
         logging.error("RTLSDR - Could not find RTLSDR with serial %s!" % serial)
@@ -496,7 +795,8 @@ def find_rtlsdr(serial=None):
     """ Search through lsusb and see if an RTLSDR exists """
 
     # If not Linux, return immediately, and assume the RTLSDR exists..
-    if platform.system() != 'Linux':
+    if is_not_linux():
+        logging.debug("RTLSDR - Not a native Linux system, skipping RTLSDR search.")
         return True
 
     lsusb_info = lsusb()
@@ -505,10 +805,10 @@ def find_rtlsdr(serial=None):
 
     for device in lsusb_info:
         try:
-            device_serial = device['Device Descriptor']['iSerial']['_desc']
-            device_product = device['Device Descriptor']['iProduct']['_desc']
-            device_pid = device['Device Descriptor']['idProduct']['_value']
-            device_vid = device['Device Descriptor']['idVendor']['_value']
+            device_serial = device["Device Descriptor"]["iSerial"]["_desc"]
+            device_product = device["Device Descriptor"]["iProduct"]["_desc"]
+            device_pid = device["Device Descriptor"]["idProduct"]["_value"]
+            device_vid = device["Device Descriptor"]["idVendor"]["_value"]
         except:
             # If we hit an exception, the device likely doesn't have one of the required fields.
             continue
@@ -518,9 +818,9 @@ def find_rtlsdr(serial=None):
             if serial == None:
                 return True
             else:
-                if (device_serial == serial):
-                    bus_num = int(device['bus'])
-                    device_num = int(device['device'])
+                if device_serial == serial:
+                    bus_num = int(device["bus"])
+                    device_num = int(device["device"])
 
     if bus_num and device_num:
         # We have found an RTLSDR with this serial number!
@@ -535,7 +835,8 @@ def reset_all_rtlsdrs():
     """ Reset all RTLSDR devices found in the lsusb tree """
 
     # If not Linux, return immediately.
-    if platform.system() != 'Linux':
+    if is_not_linux():
+        logging.debug("RTLSDR - Not a native Linux system, skipping reset attempt.")
         return
 
     lsusb_info = lsusb()
@@ -544,26 +845,28 @@ def reset_all_rtlsdrs():
 
     for device in lsusb_info:
         try:
-            device_product = device['Device Descriptor']['iProduct']['_desc']
-            device_pid = device['Device Descriptor']['idProduct']['_value']
-            device_vid = device['Device Descriptor']['idVendor']['_value']
+            device_product = device["Device Descriptor"]["iProduct"]["_desc"]
+            device_pid = device["Device Descriptor"]["idProduct"]["_value"]
+            device_vid = device["Device Descriptor"]["idVendor"]["_value"]
         except:
             # If we hit an exception, the device likely doesn't have one of the required fields.
             continue
 
-        if is_rtlsdr(device_vid, device_pid) :
-            bus_num = int(device['bus'])
-            device_num = int(device['device'])
+        if is_rtlsdr(device_vid, device_pid):
+            bus_num = int(device["bus"])
+            device_num = int(device["device"])
 
-            logging.info("RTLSDR - Attempting to reset: Bus: %d  Device: %d" % (bus_num, device_num))
+            logging.info(
+                "RTLSDR - Attempting to reset: Bus: %d  Device: %d"
+                % (bus_num, device_num)
+            )
             reset_usb(bus_num, device_num)
 
     if device_num is None:
         logging.error("RTLSDR - Could not find any RTLSDR devices to reset!")
 
 
-
-def rtlsdr_test(device_idx='0', rtl_sdr_path="rtl_sdr", retries = 2):
+def rtlsdr_test(device_idx="0", rtl_sdr_path="rtl_sdr", retries=5):
     """ Test that a RTLSDR with supplied device ID is accessible.
 
     This function attempts to read a small set of samples from a rtlsdr using rtl-sdr.
@@ -577,20 +880,31 @@ def rtlsdr_test(device_idx='0', rtl_sdr_path="rtl_sdr", retries = 2):
         bool: True if the RTLSDR device is accessible, False otherwise.
     """
 
-    _rtl_cmd = "timeout 5 %s -d %s -n 200000 - > /dev/null" % (rtl_sdr_path, str(device_idx))
+    # Immediately return true for any SDR with a device ID that starts with TCP,
+    # as this indicates this is not actually a RTLSDR, but a client connecting to some other
+    # SDR server.
+    if device_idx.startswith("TCP"):
+        logging.debug("RTLSDR - TCP Device, skipping RTLSDR test step.")
+        return True
 
+    _rtl_cmd = "timeout 5 %s -d %s -n 200000 - > /dev/null" % (
+        rtl_sdr_path,
+        str(device_idx),
+    )
 
     # First, check if the RTLSDR with a provided serial number is present.
-    if device_idx == '0':
+    if device_idx == "0":
         # Check for the presence of any RTLSDRs.
         _rtl_exists = find_rtlsdr()
 
     else:
         # Otherwise, look for a particular RTLSDR
         _rtl_exists = find_rtlsdr(device_idx)
-        
+
     if not _rtl_exists:
-        logging.error("RTLSDR - RTLSDR with serial #%s is not present!" % str(device_idx))
+        logging.error(
+            "RTLSDR - RTLSDR with serial #%s is not present!" % str(device_idx)
+        )
         return False
 
     # So now we know the rtlsdr we are attempting to test does exist.
@@ -600,12 +914,12 @@ def rtlsdr_test(device_idx='0', rtl_sdr_path="rtl_sdr", retries = 2):
 
     while _rtlsdr_retries > 0:
         try:
-            FNULL = open(os.devnull, 'w') # Inhibit stderr output
+            FNULL = open(os.devnull, "w")  # Inhibit stderr output
             _ret_code = subprocess.check_call(_rtl_cmd, shell=True, stderr=FNULL)
             FNULL.close()
         except subprocess.CalledProcessError:
             # This exception means the subprocess has returned an error code of one.
-            # This indicates either the RTLSDR doesn't exist, or 
+            # This indicates either the RTLSDR doesn't exist, or
             pass
         else:
             # rtl-sdr returned OK. We can return True now.
@@ -614,7 +928,7 @@ def rtlsdr_test(device_idx='0', rtl_sdr_path="rtl_sdr", retries = 2):
 
         # If we get here, it means we failed to read any samples from the RTLSDR.
         # So, we attempt to reset it.
-        if device_idx == '0':
+        if device_idx == "0":
             reset_all_rtlsdrs()
         else:
             reset_rtlsdr_by_serial(device_idx)
@@ -624,6 +938,10 @@ def rtlsdr_test(device_idx='0', rtl_sdr_path="rtl_sdr", retries = 2):
         time.sleep(2)
 
     # If we run out of retries, clearly the RTLSDR isn't working.
+    logging.error(
+        "RTLSDR - RTLSDR with serial #%s was not recovered after %d reset attempts."
+        % (str(device_idx), retries)
+    )
     return False
 
 
@@ -696,7 +1014,8 @@ def position_info(listener, balloon):
         bearing += 2 * pi
 
     return {
-        "listener": listener, "balloon": balloon,
+        "listener": listener,
+        "balloon": balloon,
         "listener_radians": (lat1, lon1, alt1),
         "balloon_radians": (lat2, lon2, alt2),
         "angle_at_centre": degrees(angle_at_centre),
@@ -706,7 +1025,7 @@ def position_info(listener, balloon):
         "great_circle_distance": great_circle_distance,
         "straight_distance": distance,
         "elevation": degrees(elevation),
-        "elevation_radians": elevation
+        "elevation_radians": elevation,
     }
 
 
@@ -722,15 +1041,15 @@ def peak_decimation(freq, power, factor):
         tuple: (freq, power)
     """
 
-    _out_len = len(freq)//factor
+    _out_len = len(freq) // factor
 
-    _freq_out =[]
+    _freq_out = []
     _power_out = []
 
     try:
         for i in range(_out_len):
-            _f_slice = freq[i*factor : i*factor + factor]
-            _p_slice = power[i*factor : i*factor + factor]
+            _f_slice = freq[i * factor : i * factor + factor]
+            _p_slice = power[i * factor : i * factor + factor]
 
             _freq_out.append(_f_slice[np.argmax(_p_slice)])
             _power_out.append(_p_slice.max())
@@ -742,5 +1061,8 @@ def peak_decimation(freq, power, factor):
 
 if __name__ == "__main__":
     import sys
-    logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s', level=logging.DEBUG)
+
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)s:%(message)s", level=logging.DEBUG
+    )
     check_autorx_version()

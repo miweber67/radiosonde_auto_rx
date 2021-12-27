@@ -1,0 +1,8 @@
+crcmod
+python-dateutil
+flask
+flask-socketio
+numpy
+requests
+semver
+simplekml

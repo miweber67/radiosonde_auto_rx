@@ -173,19 +173,32 @@ def read_log_file(filename, decimation=10, min_altitude=100):
     altitude = []
     temperature = []
     humidity = []
+    snr = []
+    ferror = []
 
     with open(filename, 'r') as _file:
         for line in _file:
             try:
                 _fields = line.split(',')
 
+                # Log fields:   0          1      2     3   4   5   6     7     8       9    10       11   12       13  14         15   16     17          18
+                #               "timestamp,serial,frame,lat,lon,alt,vel_v,vel_h,heading,temp,humidity,type,freq_mhz,snr,f_error_hz,sats,batt_v,burst_timer,aux_data\n"
+
                 # Attempt to parse the line
                 _time = _fields[0]
                 _lat = float(_fields[3])
                 _lon = float(_fields[4])
                 _alt = float(_fields[5])
-                _temp = float(_fields[6])
-                _hum = float(_fields[7])
+                _temp = float(_fields[9])
+                _hum = float(_fields[10])
+                try:
+                    # Attempt to extract SNR and frequency error fields.
+                    # These may not be present on older log files.
+                    _snr = float(_fields[13])
+                    _ferror = float(_fields[14])
+                except:
+                    _snr = -99
+                    _ferror = 0.0
 
                 # Append data to arrays.
                 times.append(_time)
@@ -194,6 +207,8 @@ def read_log_file(filename, decimation=10, min_altitude=100):
                 altitude.append(_alt)
                 temperature.append(_temp)
                 humidity.append(_hum)
+                snr.append(_snr)
+                ferror.append(_ferror)
             except Exception as e:
                 print("Error reading line: ")
 
@@ -201,7 +216,7 @@ def read_log_file(filename, decimation=10, min_altitude=100):
 
     _output = [] # Altitude, Wind Speed, Wind Direction, Temperature, Dew Point
     # First entry, We assume all the values are unknown for now.
-    _output.append([altitude[0], np.NaN, np.NaN, np.NaN, np.NaN, np.NaN])
+    _output.append([altitude[0], np.NaN, np.NaN, np.NaN, np.NaN, np.NaN, snr[0], ferror[0]])
 
     _burst = False
     _startalt = altitude[0]
@@ -239,12 +254,12 @@ def read_log_file(filename, decimation=10, min_altitude=100):
         _heading = _movement['bearing']
         _velocity = _movement['great_circle_distance']/_delta_seconds
 
-        _output.append([altitude[i], _velocity, _heading, T, DP, RH])
+        _output.append([altitude[i], _velocity, _heading, T, DP, RH, snr[i], ferror[i]])
 
         i += decimation
 
     # Convert our output data into something we can process easier.
-    return (np.array(_output), _burst, _startalt, times[-1])
+    return (np.array(_output), _burst, _startalt, times[-1], snr, ferror)
 
 
 def plot_matplotlib(data_np, title="", metric=False, alt_limit = 20000, temp_limit=None):
@@ -330,8 +345,6 @@ def plot_metpy(data, title="", saveplot=None, showplot=True):
     if saveplot != None:
         fig.savefig(saveplot, bbox_inches='tight')
 
-    if showplot:
-        plt.show()
 
 
 #
@@ -393,7 +406,7 @@ def process_directory(log_dir, output_dir, status_file, time_limit = 60):
 
         # Read in the file!
         try:
-            (data, burst, startalt,  last_time) = read_log_file(_file, decimation=10)
+            (data, burst, startalt,  last_time, snr, ferror) = read_log_file(_file, decimation=10)
 
             # Don't process files with a starting altitude well above ground.
             # This indicates it's likely a sonde from a long way away.
@@ -425,10 +438,6 @@ def process_directory(log_dir, output_dir, status_file, time_limit = 60):
     write_status_file(status_file, _log_status)
 
 
-
-
-
-
 if __name__ == "__main__":
     # Data format:
     # 2019-04-17T00:40:40.000Z,P4740856,7611,-35.38981,139.47062,12908.1,-67.9,25.0,RS41,402.500,SATS 9,BATT -1.0
@@ -443,17 +452,37 @@ if __name__ == "__main__":
     parser.add_argument("--log-dir", default="../log/", type=str, help="Directory containing sonde logs to process.")
     parser.add_argument("--output-dir", default="./plots/", type=str, help="Output directory to save plots to.")
     parser.add_argument("--plot-status-file", default="plot_status.txt", type=str, help="Plotting status file.")
+    parser.add_argument("--snr", default=False, action='store_true', help="Plot SNR vs time.")
+    parser.add_argument("--ferror", default=False, action='store_true', help="Plot Frequency Error vs time.")
     args = parser.parse_args()
 
     if args.singlefile != "":
         # Process a single file.
 
-        (data_np, burst, startalt, last_time) = read_log_file(args.singlefile, decimation=args.decimation)
+        (data_np, burst, startalt, last_time, snr, ferror) = read_log_file(args.singlefile, decimation=args.decimation)
 
         #plot_matplotlib(data_np, title=os.path.basename(args.filename), metric=args.metric, alt_limit=args.alt_limit, temp_limit=args.temp_limit)
 
 
         plot_metpy(data_np, saveplot=None, showplot=True)
+
+        if args.snr:
+            plt.figure()
+            plt.plot(snr)
+            plt.xlabel("Sample")
+            plt.ylabel("SNR (dB)")
+            plt.title("SNR vs Sample")
+            plt.grid()
+        
+        if args.ferror:
+            plt.figure()
+            plt.plot(ferror)
+            plt.xlabel("Sample")
+            plt.ylabel("Frequency Error (Hz)")
+            plt.title("Frequency Error vs Sample")
+            plt.grid()
+
+        plt.show()
 
     else:
         # do a batch process run.
